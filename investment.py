@@ -15,45 +15,65 @@ class Investment:
                
         
         def download_data():
-            #use download to get non-adjusted Close price data
+            #use download to get non-adjusted Close price data.  note that this price IS adjusted for splits. 
+            #but NOT adjusted for dividends
             stock_hist = yf.download(self.ticker,interval="1mo",start=self.start, end=self.end)[['Close']].copy()
             
-            #use Ticker to get dividend data
-            div_hist   = yf.Ticker(self.ticker).history(interval="1mo",start=self.start, end=self.end)[['Dividends']].copy()
+            #use Ticker to get dividend and split data
+            div_split_hist  = yf.Ticker(self.ticker).history(interval="1mo",start=self.start, end=self.end)[['Dividends','Stock Splits']].copy()
             
-            stock_data = pd.concat([stock_hist, div_hist],axis=1)
+            stock_data = pd.concat([stock_hist, div_split_hist],axis=1)
             stock_data['Close'].interpolate(method='time',inplace=True)
             return stock_data
         
-        def calculate_tables():  #should be able to clean this up a bit. can it be done within a dataframe?
-            prices    = self.investment_data['Close'].values.tolist()
+        def calculate_tables():  #should be able to clean this up a bit. can it be done within a dataframe using loc?
+            
+            def split_replace_zero(split):
+                if split==0:
+                    split=1
+                return split
+            
+            def fix_dividend_outlier():
+                self.investment_data['Dividends'].replace(24.15,0.2415,inplace=True)
+            
+            #remove split adjustment from the price
+            self.investment_data['True Close']    = self.investment_data['Close']*self.investment_data['Split Multiplier']
+            
+            prices    = self.investment_data['True Close'].values.tolist()
             dividends = self.investment_data['Dividends'].values.tolist()
-            data      = list(zip(prices,dividends))
-            initial_investment = amount
+            splits    = self.investment_data['Stock Splits'].values.tolist()
             
             #initialize investment state
-            balance = [initial_investment]
+            balance = [amount]
             shares  = [balance[0]/prices[0]]
             cash    = [0]
             
             #create an iterable and increment before entering the "for" loop
             prices_iter = iter(prices.copy())
             buyprice    = next(prices_iter)  
-            
+    
             for month,price in enumerate(prices_iter,start=1):
                 total_dividend = dividends[month]*shares[month-1]
+                split = splits[month-1]
                 if drip:
                     newshares = total_dividend/price
                     cash.append(0)
                 else:
                     newshares = 0
                     cash.append(cash[month-1]+total_dividend)  
-                shares.append(shares[month-1]+newshares)
+                shares.append((shares[month-1]+newshares)*split_replace_zero(split))
                 balance.append(shares[month]*price+cash[month])
                 
             #these variables could be combined into a dictionary
             self.investment_data['cash'],self.investment_data['shares'],self.investment_data['balance'] = [cash,shares,balance]
+                        
+            fix_dividend_outlier()
             
+        def split_multiplier():
+            new_column=self.investment_data['Stock Splits'].replace(0,1).values[::-1].cumprod()[::-1]
+            self.investment_data['Split Multiplier']=new_column
+            
+        
         def create_summary_table():
             gain = self.investment_data.tail(1)['balance'].values[0]/self.initial_investment
             
@@ -71,5 +91,6 @@ class Investment:
         
             
         self.investment_data=download_data()
+        split_multiplier()
         calculate_tables()
         create_summary_table()
