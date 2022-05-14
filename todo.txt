@@ -1,4 +1,4 @@
-split multiplier approaches
+ split multiplier approaches
 -will reprice stock after downloading
 1)convert prices to a list and reverse iterate through this list, multiplying
 by appropriate split product.
